@@ -13,10 +13,12 @@ def torch_safe_load(module, state_dict, strict=True):
 
 class EngineBase(object):
     def __init__(self, model, optimizer_model, criterion, lr_scheduler_model, evaluator, 
-                 save_dir=None, md_loss=None, grad_clip_norm=None, logger=None):
+                 save_dir=None, md_loss=None, grad_clip_norm=None, logger=None,
+                 grad_accum_steps=1, log_interval=100, eval_every=1,
+                 skip_initial_eval=False):
 
 
-        self.device = 'cuda'
+        self.device = next(model.parameters()).device
         self.model = model
         self.optimizer_model = optimizer_model
         self.criterion = criterion
@@ -27,6 +29,10 @@ class EngineBase(object):
         self.grad_clip = grad_clip_norm
         self.metadata = {}
         self.logger = logger
+        self.grad_accum_steps = grad_accum_steps
+        self.log_interval = log_interval
+        self.eval_every = eval_every
+        self.skip_initial_eval = skip_initial_eval
 
     def model_to_device(self):
         self.model.to(self.device)
@@ -43,7 +49,11 @@ class EngineBase(object):
         state_dict = {
             'model': self.model.state_dict(),
             'optimizer_model': self.optimizer_model.state_dict(),
+            'metadata': dict(metadata or self.metadata),
         }
+        for key in ('classes', 'config'):
+            if key in state_dict['metadata']:
+                state_dict[key] = state_dict['metadata'][key]
         if self.lr_scheduler_model is not None:
             state_dict['lr_scheduler_model'] = self.lr_scheduler_model.state_dict()
         print('Saving model to {}'.format(save_to))

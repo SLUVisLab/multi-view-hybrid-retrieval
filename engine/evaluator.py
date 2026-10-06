@@ -10,16 +10,18 @@ def top_k_acc(knn_labels, gt_labels, k):
 class Evaluator(object):
 
 
-    def __init__(self, model, n=2):
+    def __init__(self, model, n=2, device=None, logger=None, log_interval=100):
 
         self.model = model
 
-        self.extract_device = 'cuda'
-        self.eval_device = 'cuda'
+        self.extract_device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.eval_device = self.extract_device
 
         self.num_classes = self.model.num_classes
         self.embed_dim = self.model.embed_dim
         self.n = n
+        self.logger = logger
+        self.log_interval = log_interval
 
     @torch.no_grad()
     def extract(self, dataloader):
@@ -95,11 +97,11 @@ class Evaluator(object):
             gt_labels = gt_labels.cpu()
             predictions = torch.argsort(logits, dim=1, descending=True)
 
-        class_1 = top_k_acc(predictions, gt_labels, 1)
-        class_2 = top_k_acc(predictions, gt_labels, 2)
-        class_5 = top_k_acc(predictions, gt_labels, 5)
-        class_10 = top_k_acc(predictions, gt_labels, 10)
-        class_100 = top_k_acc(predictions, gt_labels, 100)
+        class_1 = top_k_acc(predictions, gt_labels, min(1, self.num_classes))
+        class_2 = top_k_acc(predictions, gt_labels, min(2, self.num_classes))
+        class_5 = top_k_acc(predictions, gt_labels, min(5, self.num_classes))
+        class_10 = top_k_acc(predictions, gt_labels, min(10, self.num_classes))
+        class_100 = top_k_acc(predictions, gt_labels, min(100, self.num_classes))
 
         metrics = {
             'top1_acc': class_1.item(),
@@ -111,13 +113,48 @@ class Evaluator(object):
         return metrics
 
     def evaluate(self, dataloader):
-
-        results_dict = self.extract(dataloader)
-        metrics_dict = {}
-
-        for view_type in results_dict:
-            gt_classes = np.expand_dims(results_dict[view_type]['classes'], -1)
-            metrics = self.get_metrics(results_dict[view_type]['logits'].to(self.eval_device), torch.from_numpy(gt_classes).to(self.eval_device))
-            metrics_dict[view_type] = metrics
-
-        return metrics_dict
+        """Compute top-k online instead of allocating examples x classes arrays."""
+        self.model.eval()
+        self.model.to(self.extract_device)
+        ks = (1, 2, 5, 10, 100)
+        totals = {}
+        seen_single_paths = set()
+        num_batches = len(dataloader)
+        for batch_index, (images, targets, paths) in enumerate(dataloader):
+            images = images.to(self.extract_device, non_blocking=True)
+            with torch.autocast(device_type=self.extract_device.type,
+                                dtype=torch.bfloat16,
+                                enabled=self.extract_device.type == 'cuda'):
+                outputs = self.model(images)
+            for view_type, output in outputs.items():
+                logits = output['logits']
+                if view_type == 'single':
+                    labels = targets.flatten().to(self.extract_device, non_blocking=True)
+                    flat_paths = np.asarray(paths).T.flatten().tolist()
+                    keep = []
+                    for index, path in enumerate(flat_paths):
+                        if path not in seen_single_paths:
+                            keep.append(index)
+                            seen_single_paths.add(path)
+                    if not keep:
+                        continue
+                    keep = torch.as_tensor(keep, device=logits.device)
+                    logits, labels = logits[keep], labels[keep]
+                else:
+                    labels = targets[:, 0].to(self.extract_device, non_blocking=True)
+                max_k = min(max(ks), logits.shape[1])
+                predictions = logits.topk(max_k, dim=1).indices
+                stats = totals.setdefault(view_type, {'total': 0, **{k: 0 for k in ks}})
+                stats['total'] += labels.numel()
+                for k in ks:
+                    stats[k] += (predictions[:, :min(k, max_k)] == labels[:, None]).any(1).sum().item()
+            if (self.logger is not None and
+                    ((batch_index + 1) % self.log_interval == 0 or
+                     batch_index + 1 == num_batches)):
+                self.logger.info('Evaluation batch %d/%d (%.1f%%)',
+                                 batch_index + 1, num_batches,
+                                 100 * (batch_index + 1) / num_batches)
+        return {
+            view_type: {f'top{k}_acc': stats[k] / stats['total'] for k in ks}
+            for view_type, stats in totals.items()
+        }

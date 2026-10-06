@@ -1,0 +1,7 @@
+numpy<2
+torch
+torchvision
+timm==0.9.12
+huggingface-hub<1
+einops
+Pillow

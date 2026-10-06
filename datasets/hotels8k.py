@@ -26,7 +26,8 @@ def generate_target2indices(targets):
 
 class HotelsDataset(torch.utils.data.Dataset):
 
-    def __init__(self, data_dir, split, n=2, train=False, classes=None):
+    def __init__(self, data_dir, split, n=2, train=False, classes=None,
+                 image_size=224):
 
         self.all_paths = np.load(os.path.join(data_dir, f'{split}.npy')).tolist()
         for i in range(len(self.all_paths)):
@@ -36,18 +37,19 @@ class HotelsDataset(torch.utils.data.Dataset):
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
 
+        resize_size = round(image_size * 256 / 224)
         if split == 'train':
             self.transform = transforms.Compose([
-                transforms.Resize(256),
-                transforms.RandomCrop(224),
+                transforms.Resize(resize_size),
+                transforms.RandomCrop(image_size),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=mean, std=std)
                 ])
         else:
             self.transform = transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
+                transforms.Resize(resize_size),
+                transforms.CenterCrop(image_size),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=mean, std=std)
             ])
@@ -114,7 +116,7 @@ class HotelsDataset(torch.utils.data.Dataset):
             while len(paths) < self.n:
                 selection = np.random.choice(possible_choices)
                 path = self.image_paths[selection]
-                if selection not in paths or not unique_requirement:
+                if path not in paths or not unique_requirement:
                     paths.append(path)
         else:
             paths = self.image_paths[index]

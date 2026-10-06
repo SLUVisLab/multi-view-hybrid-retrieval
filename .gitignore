@@ -1,0 +1,55 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Dataset downloads, extracted images, and metadata (not the datasets/ code).
+/data/
+shards/
+images/
+metadata_gallery.json
+metadata_test_room.json
+metadata_test_object.json
+metadata_hotels.json
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Model weights, embedding caches, and other binary artifacts.
+/checkpoints/
+/cache/
+.cache/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Training/evaluation outputs and monitoring files.
+/output/
+/outputs/
+/results/
+/runs/
+/wandb/
+*.log
+*.pid
+*.exit
+*.status
+retrieval_test_metrics.json
+classification_test_metrics.json
+validation-epoch-*.json
+events.out.tfevents.*
+
+# Local credentials/configuration
+.env
+.env.*
