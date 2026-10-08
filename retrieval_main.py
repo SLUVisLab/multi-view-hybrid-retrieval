@@ -263,7 +263,7 @@ def run_official_evaluation(model, classes, args, device, logger, checkpoint_tag
             queries["joint_embeddings"], queries["view_embeddings"],
             queries["labels"], gallery["embeddings"], gallery["labels"],
             query_view_mask=queries["view_mask"],
-            **_evaluation_kwargs(args, compute_image_metrics=False),
+            **_evaluation_kwargs(args, compute_image_metrics=True),
         )
 
         # Preserve the official single-image OpenHotels protocol over every test
@@ -299,6 +299,14 @@ def run_official_evaluation(model, classes, args, device, logger, checkpoint_tag
             "multi_view": metrics,
             "official_single_image": single_metrics,
         }
+        logger.info(
+            "%s single-image embedding to gallery images Recall@K: %s", split,
+            single_metrics["image"]["joint"],
+        )
+        logger.info(
+            "%s fused multi-image embedding to gallery images Recall@K: %s", split,
+            metrics["image"]["joint"],
+        )
         logger.info("%s retrieval metrics:\n%s", split,
                     json.dumps(all_metrics[split], indent=2, sort_keys=True))
 
@@ -438,7 +446,7 @@ def train(args, device, logger):
                 queries["joint_embeddings"], queries["view_embeddings"],
                 queries["labels"], gallery["embeddings"], gallery["labels"],
                 query_view_mask=queries["view_mask"],
-                **_evaluation_kwargs(args, compute_image_metrics=False),
+                **_evaluation_kwargs(args, compute_image_metrics=True),
             )
             _write_json(
                 Path(args.save_dir) / f"validation-epoch-{epoch:03d}.json",

@@ -227,14 +227,29 @@ in `retrieval_test_metrics.json`:
 - **`multi_view`** groups queries by hotel and room/upload. Groups with two or
   three images use those images; groups with at least four use a deterministic,
   category-diverse selection of four. Singleton uploads are excluded from this
-  protocol. Each group contributes one collection by default. Hotel Recall@1/5/10/100
-  is reported for the learned joint descriptor, late-interaction view scoring,
-  and their hybrid, using max and top-3-mean hotel aggregation.
+  protocol. Each group contributes one collection by default. Image-gallery
+  Recall@1/5/10/100 matches the fused descriptor directly to individual gallery
+  images. Additional hotel Recall@1/5/10/100 is reported for the learned joint
+  descriptor, late-interaction view scoring, and their hybrid, using max and
+  top-3-mean hotel aggregation.
 - **`official_single_image`** evaluates every official test image independently,
   including singleton uploads and images not selected for grouped queries.
   It reports image-gallery Recall@1/5/10/100: success means a correctly labelled
   gallery image appears among the top K retrieved images. This preserves the
   original single-image benchmark protocol.
+
+Every results report must include the direct image-gallery Recall@1/5/10/100
+for both single-image and fused multi-image queries. These rank individual
+gallery images by cosine similarity and count a hit when at least one of the
+top K images has the query's hotel identity. Read the single-image scores from
+`[split]["official_single_image"]["image"]["joint"]` and the fused multi-image
+scores from `[split]["multi_view"]["image"]["joint"]` in the results JSON.
+Hotel aggregation and the joint/per-view hybrid blend are additional results
+and must not replace those two comparisons. Multi-image validation also
+includes direct image-gallery scores under `["image"]["joint"]`. Single-image
+evaluation includes every official test row, while grouped queries require at
+least two images and select at most four; report that difference when comparing
+the two query types.
 
 Grouped evaluation uses a fixed, reproducible selection, while training randomly
 samples the number of query views. Padded positions are masked rather than
@@ -247,6 +262,27 @@ keyed by checkpoint contents and evaluation settings. Reduce
 memory is limited; reduce extraction batch sizes if embedding extraction runs
 out of memory. `--max_test_queries` and `--max_test_image_queries` can cap
 debugging runs; leave both at their default 0 for full evaluation.
+
+### Compare completed checkpoints using cached embeddings
+
+The follow-up helper checks for successful run completion and recomputes both
+single-image and fused multi-image image-gallery recalls from existing caches.
+It retains the original results, checks that query/gallery settings match, and
+writes per-checkpoint results and percentage-point differences:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/check_retrieval_evaluation.py \
+  --previous-run output/openhotels-retrieval-epshn \
+  --current-run output/openhotels-retrieval-epshn-batch48-continuation \
+  --output-dir output/retrieval-comparison \
+  --device cuda:0 --physical-gpu 0
+```
+
+The selected GPU must have no active compute processes. Use `--device cpu` for
+CPU scoring, or `--check-only` to report completion without rescoring. An
+optional `--not-before` timestamp with an explicit UTC offset supports a
+one-off deferred check. The script writes local reports; it does not send chat
+notifications. Existing embedding caches are required; no images are extracted.
 
 ### Resume training or add a larger-batch phase
 
@@ -344,6 +380,39 @@ python scripts/retrieval_smoke_test.py \
 To also check strict loading and a production 224-pixel embedding, replace
 `--no-check_checkpoint` with
 `--checkpoint checkpoints/openhotels-retrieval-best.pth`.
+
+## Retrieval ONNX export
+
+Export a four-view retrieval checkpoint with embedded float32 weights:
+
+```bash
+python -m pip install onnx==1.17.0 onnxruntime==1.20.1
+python scripts/export_retrieval_onnx.py \
+  --checkpoint checkpoints/openhotels-retrieval-best.pth \
+  --output output/onnx/retrieval-best.onnx
+```
+
+For a known epoch, add `--expected-epoch 30` (or the corresponding epoch) to
+verify checkpoint provenance before exporting.
+
+Inputs are float32 `images` with shape `[batch, views, 3, 224, 224]` and boolean
+`view_mask` with shape `[batch, views]`. Both batch and view counts are dynamic;
+use 1--4 views and at least one true mask entry per collection. Preprocess each
+RGB image with the evaluation transform: resize the shorter side to 256 using
+bilinear interpolation, center crop to 224, scale to `[0, 1]`, then normalize
+with mean `[0.485, 0.456, 0.406]` and standard deviation `[0.229, 0.224, 0.225]`.
+
+The outputs are `joint_embedding` (`[batch, 384]`) and `view_embeddings`
+(`[batch, views, 384]`). Valid embeddings have unit L2 norm; masked view outputs
+are zero. For gallery images and single-image queries, supply one view and use
+`view_embeddings[:, 0, :]`. For direct multi-image retrieval, use
+`joint_embedding` against the single-image gallery embeddings. Both outputs
+are available for hybrid scoring; hotel aggregation runs outside the model.
+
+The exporter compares both outputs with the original checkpoint in ONNX
+Runtime, including mixed view counts, mask holes, and padding invariance, before
+saving the file. The adjacent JSON records preprocessing, checkpoint provenance,
+the ONNX checksum, and numerical validation results.
 
 ## Original MV-HFMD and citation
 
